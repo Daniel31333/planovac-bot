@@ -1,9 +1,12 @@
 import os
 import json
 import asyncio
+import logging
 from datetime import datetime, timedelta
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN", "8895635780:AAFFNShtEGgH3atRvI9nA6_sOB9MbmKyLSs")
 MY_ID = int(os.environ.get("MY_ID", "8332707731"))
@@ -183,24 +186,28 @@ async def historie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lines.append(f"*{format_date_cz(k)}*\n{bar} {done}/{total}\n")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-# ranní notifikace v 8:00
-async def morning_notification(ctx: ContextTypes.DEFAULT_TYPE):
-    plans = load_plans()
-    plan_data = plans.get(today_key())
-    if not plan_data or not plan_data["tasks"]:
-        await ctx.bot.send_message(
-            chat_id=MY_ID,
-            text="☀️ Dobré ráno! Na dnešek nemáš žádný plán.\nNapiš /plan a naplánuj si den."
-        )
-        return
-    msg = "☀️ *Dobré ráno!*\n\n" + format_plan(today_key(), plan_data)
-    await ctx.bot.send_message(chat_id=MY_ID, text=msg, parse_mode="Markdown")
+async def send_morning(app):
+    while True:
+        now = datetime.now()
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait = (target - now).total_seconds()
+        await asyncio.sleep(wait)
+        plans = load_plans()
+        plan_data = plans.get(today_key())
+        if not plan_data or not plan_data["tasks"]:
+            msg = "☀️ Dobré ráno! Na dnešek nemáš žádný plán.\nNapiš /plan"
+        else:
+            msg = "☀️ Dobré ráno!\n\n" + format_plan(today_key(), plan_data)
+        try:
+            await app.bot.send_message(chat_id=MY_ID, text=msg, parse_mode="Markdown")
+        except:
+            pass
 
-def main():
+async def main():
     app = Application.builder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pomoc", pomoc))
     app.add_handler(CommandHandler("plan", plan))
     app.add_handler(CommandHandler("dnes", dnes))
     app.add_handler(CommandHandler("zitra", zitra))
@@ -208,14 +215,10 @@ def main():
     app.add_handler(CommandHandler("historie", historie))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # ranní notifikace v 8:00
-    app.job_queue.run_daily(
-        morning_notification,
-        time=datetime.strptime("08:00", "%H:%M").time().replace(tzinfo=__import__("pytz").timezone("Europe/Prague"))
-    )
-
-    print("Bot běží...")
-    app.run_polling()
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        await send_morning(app)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
